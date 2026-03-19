@@ -1,11 +1,18 @@
 import * as React from "react";
 import {
+  ChevronDown,
+  ChevronRight,
+  CloudUpload,
   Download,
   Eye,
+  FileText,
+  ListChecks,
   MoreVertical,
   Pause,
+  Plus,
   Play,
   RotateCcw,
+  Trash2,
 } from "lucide-react";
 
 import { Badge } from "../components/ui/badge";
@@ -46,6 +53,8 @@ type Campaign = {
   done: number; // artículos completados
   canStuck: boolean;
   hasStuck: boolean;
+  /** Porcentaje (1–99) en el que se simula el error; por defecto 80 si no se define. */
+  stuckTargetPercent?: number;
 };
 
 type Country = "Chile" | "Argentina";
@@ -172,7 +181,7 @@ function makeCampaigns(country: Country, flag: StoreFlag): Campaign[] {
   const pattern = patterns[Math.floor(rand() * patterns.length)];
   const ids = ["c1", "c2", "c3", "c4", "c5", "c6"];
 
-  const base = ids.map((id, idx) => {
+  const base: Campaign[] = ids.map((id, idx): Campaign => {
     const status = pattern[idx] ?? "idle";
     let total = totalsPool[Math.floor(rand() * totalsPool.length)];
     if (country === "Chile" && flag === "Jumbo" && id === "c2") {
@@ -207,7 +216,7 @@ function makeCampaigns(country: Country, flag: StoreFlag): Campaign[] {
   // solo la campaña c2 cuando la combinación es Chile + Jumbo.
   const stuckIdx = base.findIndex((c) => c.id === "c2");
   if (country === "Chile" && flag === "Jumbo" && stuckIdx >= 0) {
-    base[stuckIdx] = { ...base[stuckIdx], canStuck: true };
+    base[stuckIdx] = { ...base[stuckIdx], canStuck: true, stuckTargetPercent: 80 };
   }
 
   return base;
@@ -342,6 +351,14 @@ export function PriceMonitorPage({
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const [restartDialogOpen, setRestartDialogOpen] = React.useState(false);
   const [restartTargetId, setRestartTargetId] = React.useState<string | null>(null);
+  const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
+  const [newCampaignName, setNewCampaignName] = React.useState("");
+  const [newCampaignFile, setNewCampaignFile] = React.useState<File | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [simCollapseOpen, setSimCollapseOpen] = React.useState(false);
+  const [simArticles, setSimArticles] = React.useState("");
+  const [simError, setSimError] = React.useState(false);
+  const [simErrorPercent, setSimErrorPercent] = React.useState("80");
 
   const selectedCampaign = React.useMemo(
     () => campaigns.find((c) => c.id === selectedId) ?? null,
@@ -405,14 +422,18 @@ export function PriceMonitorPage({
             let adjustedDone = nextDone;
 
             const runForMs = Date.now() - (runStartedAtRef.current[id] ?? Date.now());
-            const shouldStuckAt80 =
+            const stuckPct = c.stuckTargetPercent ?? 80;
+            const shouldStuckAtPct =
               c.canStuck &&
               !c.hasStuck &&
               runForMs >= 3000 &&
-              Math.round((nextDone / c.total) * 100) >= 80;
+              Math.round((nextDone / c.total) * 100) >= stuckPct;
 
-            if (shouldStuckAt80) {
-              adjustedDone = Math.max(1, Math.min(c.total - 1, Math.round(c.total * 0.8)));
+            if (shouldStuckAtPct) {
+              adjustedDone = Math.max(
+                1,
+                Math.min(c.total - 1, Math.round((c.total * stuckPct) / 100)),
+              );
               nextStatus = "stuck";
               shouldStop = true;
             }
@@ -503,10 +524,76 @@ export function PriceMonitorPage({
     setRestartDialogOpen(false);
   }
 
+  function downloadTemplate() {
+    const csv = "sku,precio,moneda\nSKU-001,999,CLP\nSKU-002,1234,CLP\n";
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "plantilla-campana.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function resetCreateCampaignForm() {
+    setNewCampaignName("");
+    setNewCampaignFile(null);
+    setSimCollapseOpen(false);
+    setSimArticles("");
+    setSimError(false);
+    setSimErrorPercent("80");
+  }
+
+  function handleCreateCampaign() {
+    const trimmed = newCampaignName.trim();
+    if (!trimmed) return;
+
+    const rawArticles = simArticles.replace(/\./g, "").trim();
+    const parsedArticles = rawArticles === "" ? NaN : Number.parseInt(rawArticles, 10);
+    const randomTotal = 500 + Math.round(Math.random() * 3500);
+    const total =
+      Number.isFinite(parsedArticles) && parsedArticles > 0
+        ? Math.min(999_999, Math.max(1, parsedArticles))
+        : randomTotal;
+
+    let stuckPct: number | undefined;
+    if (simError) {
+      const p = Number.parseInt(simErrorPercent, 10);
+      stuckPct = Number.isFinite(p) ? Math.min(99, Math.max(1, p)) : 80;
+    }
+
+    const created: Campaign = {
+      id: `c-${Date.now()}`,
+      name: trimmed,
+      status: "idle",
+      submittedBy: "Usuario",
+      total,
+      done: 0,
+      canStuck: simError,
+      hasStuck: false,
+      stuckTargetPercent: stuckPct,
+    };
+
+    setCampaigns((prev) => [created, ...prev]);
+    setCreateDialogOpen(false);
+    resetCreateCampaignForm();
+  }
+
   return (
     <div className="space-y-4">
-      <div>
+      <div className="flex items-center justify-between gap-4">
         <h1 className="text-2xl font-semibold">Monitor de precios</h1>
+        <Button
+          onClick={() => {
+            resetCreateCampaignForm();
+            setCreateDialogOpen(true);
+          }}
+        >
+          <Plus className="h-4 w-4" />
+          Cargar campaña
+        </Button>
       </div>
 
       <Table>
@@ -528,6 +615,7 @@ export function PriceMonitorPage({
             const isStuck = c.status === "stuck";
             const isRunning = Boolean(runningById[c.id]) && c.status !== "success";
             const restartDisabled = c.done === 0 || c.status === "success";
+            const downloadDisabled = c.status === "idle" && c.done === 0;
 
             return (
               <TableRow key={c.id}>
@@ -596,6 +684,7 @@ export function PriceMonitorPage({
                       variant="ghost"
                       size="icon"
                       aria-label="Descargar Excel simulado"
+                      disabled={downloadDisabled}
                       onClick={() => downloadExcelSimulated(c)}
                     >
                       <Download className="h-4 w-4" />
@@ -719,6 +808,7 @@ export function PriceMonitorPage({
               <DialogFooter>
                 <Button
                   variant="secondary"
+                  disabled={selectedCampaign.status === "idle" && selectedCampaign.done === 0}
                   onClick={() => downloadExcelSimulated(selectedCampaign)}
                 >
                   Descargar Excel
@@ -769,7 +859,10 @@ export function PriceMonitorPage({
                 onClick={handleRetryPending}
                 className="w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent/60"
               >
-                <div className="text-sm font-semibold">Reintentar pendientes</div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <ListChecks className="h-4 w-4 text-muted-foreground" />
+                  Reintentar pendientes
+                </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   {formatIntEs(Math.max(0, restartTargetCampaign.total - restartTargetCampaign.done))}{" "}
                   pendientes por procesar. Continúa desde el progreso actual.
@@ -781,7 +874,10 @@ export function PriceMonitorPage({
                 onClick={handleRestartFromZero}
                 className="w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent/60"
               >
-                <div className="text-sm font-semibold">Iniciar nuevamente desde cero</div>
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <RotateCcw className="h-4 w-4 text-muted-foreground" />
+                  Iniciar nuevamente desde cero
+                </div>
                 <div className="mt-1 text-xs text-muted-foreground">
                   Reinicia todo el proceso y vuelve a 0% de progreso.
                 </div>
@@ -792,6 +888,187 @@ export function PriceMonitorPage({
               No hay campaña seleccionada para reiniciar.
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={createDialogOpen}
+        onOpenChange={(open) => {
+          setCreateDialogOpen(open);
+          if (!open) resetCreateCampaignForm();
+        }}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Crear campaña</DialogTitle>
+          </DialogHeader>
+
+          <div className="mt-2 space-y-5">
+            <div className="space-y-2">
+              <label htmlFor="campaign-name" className="text-sm font-semibold">
+                Nombre de campaña
+              </label>
+              <input
+                id="campaign-name"
+                value={newCampaignName}
+                onChange={(e) => setNewCampaignName(e.target.value)}
+                placeholder="Navidad 2025"
+                className="h-11 w-full rounded-xl border border-input bg-background px-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-semibold">Carga de archivo</div>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full rounded-2xl border border-input bg-background px-4 py-8 text-center transition-colors hover:bg-accent/40"
+              >
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                  <CloudUpload className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <div className="text-sm">
+                  <span className="font-medium text-[#2563EB]">Haz click para cargar</span>{" "}
+                  o arrastre y suelte
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  XLSX o XLSM (máx. 15mb)
+                </div>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xlsm"
+                className="hidden"
+                onChange={(e) => setNewCampaignFile(e.target.files?.[0] ?? null)}
+              />
+
+              {newCampaignFile && (
+                <div className="mt-3 flex items-center justify-between rounded-2xl border border-input bg-background px-4 py-3">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#2563EB]/10 text-[#2563EB]">
+                      <FileText className="h-5 w-5" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-medium">{newCampaignFile.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {Math.max(1, Math.round(newCampaignFile.size / 1024))} KB
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Eliminar archivo"
+                    onClick={() => setNewCampaignFile(null)}
+                  >
+                    <Trash2 className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-dashed border-input">
+              <button
+                type="button"
+                onClick={() => setSimCollapseOpen((v) => !v)}
+                className="flex w-full items-center justify-between gap-2 rounded-xl px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted/50"
+              >
+                <span>Modo simulación</span>
+                {simCollapseOpen ? (
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                )}
+              </button>
+              {simCollapseOpen && (
+                <div className="space-y-4 border-t border-input px-4 pb-4 pt-3">
+                  <p className="text-xs text-muted-foreground">
+                    Solo para pruebas de interfaz en este prototipo; no aplica al producto en
+                    desarrollo.
+                  </p>
+                  <div className="space-y-2">
+                    <label htmlFor="sim-articles" className="text-sm font-medium">
+                      Cantidad de artículos
+                    </label>
+                    <input
+                      id="sim-articles"
+                      type="text"
+                      inputMode="numeric"
+                      value={simArticles}
+                      onChange={(e) => setSimArticles(e.target.value.replace(/[^\d]/g, ""))}
+                      placeholder="Vacío = aleatorio"
+                      className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Si lo dejas vacío, se asigna un total aleatorio como en las demás campañas.
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <input
+                      id="sim-error"
+                      type="checkbox"
+                      checked={simError}
+                      onChange={(e) => setSimError(e.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-input"
+                    />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <label htmlFor="sim-error" className="text-sm font-medium leading-tight">
+                        Simular error al ejecutar
+                      </label>
+                      <p className="text-xs text-muted-foreground">
+                        La campaña se detendrá en el porcentaje indicado y mostrará estado Error.
+                      </p>
+                      <div className="space-y-1">
+                        <label htmlFor="sim-error-pct" className="text-xs text-muted-foreground">
+                          Porcentaje en que ocurre el error
+                        </label>
+                        <input
+                          id="sim-error-pct"
+                          type="number"
+                          min={1}
+                          max={99}
+                          disabled={!simError}
+                          value={simErrorPercent}
+                          onChange={(e) => setSimErrorPercent(e.target.value)}
+                          className="h-9 w-24 rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                        />
+                        <span className="ml-2 text-xs text-muted-foreground">% (1–99)</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={downloadTemplate}
+              className="inline-flex items-center gap-2 text-[#2563EB] hover:underline"
+            >
+              Descargar plantilla
+              <Download className="h-4 w-4" />
+            </button>
+
+            <div className="flex justify-end gap-3 pt-1">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setCreateDialogOpen(false);
+                  resetCreateCampaignForm();
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleCreateCampaign}
+                disabled={newCampaignName.trim().length === 0}
+              >
+                Crear campaña
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

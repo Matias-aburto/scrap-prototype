@@ -1,4 +1,4 @@
-import { Bell, ChevronDown, User } from "lucide-react";
+import { ChevronDown, User } from "lucide-react";
 
 import { Button } from "../ui/button";
 import {
@@ -95,9 +95,6 @@ export function TopBar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button variant="ghost" size="icon" aria-label="Notificaciones">
-          <Bell className="h-4 w-4" />
-        </Button>
         <Button variant="ghost" size="icon" aria-label="Usuario">
           <User className="h-4 w-4" />
         </Button>
