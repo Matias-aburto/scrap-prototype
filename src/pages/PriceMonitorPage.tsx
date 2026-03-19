@@ -789,8 +789,8 @@ export function PriceMonitorPage({
               // Solo "en marcha" si sigue pending: al pasar a success/stuck el intervalo se corta
               // pero runningById puede actualizarse un tick después → evita quedar en Pause pegado.
               const isRunning = Boolean(runningById[c.id]) && c.status === "pending";
-              const restartDisabled = c.done === 0 || c.status === "success";
-              const downloadDisabled = c.status === "idle" && c.done === 0;
+              const isPaused = c.status === "pending" && !isRunning;
+              const restartDisabled = !(isStuck || isPaused);
 
               return (
                 <TableRow key={c.id}>
@@ -861,7 +861,6 @@ export function PriceMonitorPage({
                         variant="ghost"
                         size="icon"
                         aria-label="Descargar Excel simulado"
-                        disabled={downloadDisabled}
                         onClick={() => downloadExcelSimulated(c)}
                       >
                         <Download className="h-4 w-4" />
@@ -1039,7 +1038,6 @@ export function PriceMonitorPage({
               <DialogFooter>
                 <Button
                   variant="secondary"
-                  disabled={selectedCampaign.status === "idle" && selectedCampaign.done === 0}
                   onClick={() => downloadExcelSimulated(selectedCampaign)}
                 >
                   Descargar Excel
@@ -1047,7 +1045,13 @@ export function PriceMonitorPage({
 
                 <Button
                   variant="outline"
-                  disabled={selectedCampaign.done === 0 || selectedCampaign.status === "success"}
+                  disabled={
+                    !(
+                      selectedCampaign.status === "stuck" ||
+                      (selectedCampaign.status === "pending" &&
+                        !Boolean(runningById[selectedCampaign.id]))
+                    )
+                  }
                   onClick={() => openRestartDialog(selectedCampaign.id)}
                 >
                   Reiniciar
@@ -1133,12 +1137,12 @@ export function PriceMonitorPage({
           if (!open) resetCreateCampaignForm();
         }}
       >
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto pr-8">
           <DialogHeader>
             <DialogTitle>Crear campaña</DialogTitle>
           </DialogHeader>
 
-          <div className="mt-2 space-y-5">
+          <div className="mt-2 space-y-5 pb-1">
             <div className="space-y-2">
               <label htmlFor="campaign-name" className="text-sm font-semibold">
                 Nombre de campaña
