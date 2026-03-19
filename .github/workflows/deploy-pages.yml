@@ -34,6 +34,7 @@ jobs:
       - name: Build
         run: npm run build
 
+      # SPA: GitHub Pages sirve 404.html en rutas desconocidas (por si agregan router).
       - name: Create SPA fallback
         run: cp dist/index.html dist/404.html
 
