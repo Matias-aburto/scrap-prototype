@@ -1,7 +1,9 @@
 import * as React from "react";
 import {
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
+  CheckCircle2,
   CloudUpload,
   Download,
   Eye,
@@ -12,7 +14,9 @@ import {
   Plus,
   Play,
   RotateCcw,
+  Sparkles,
   Trash2,
+  X,
 } from "lucide-react";
 
 import { Badge } from "../components/ui/badge";
@@ -41,6 +45,8 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
+
+const CAMPAIGNS_PAGE_SIZE = 10;
 
 type CampaignStatus = "idle" | "pending" | "success" | "stuck";
 
@@ -74,6 +80,15 @@ function getProgressPercent(c: Campaign) {
   return clampPercent(percent);
 }
 
+function getCampaignNameFromFile(fileName: string) {
+  const withoutExt = fileName.replace(/\.[^/.]+$/, "").trim();
+  if (!withoutExt) return "";
+  return withoutExt
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function hashString(input: string) {
   let h = 2166136261;
   for (let i = 0; i < input.length; i++) {
@@ -93,10 +108,12 @@ function mulberry32(seed: number) {
   };
 }
 
-function makeCampaigns(country: Country, flag: StoreFlag): Campaign[] {
-  const seed = hashString(`${country}|${flag}`);
-  const rand = mulberry32(seed);
+const CAMPAIGN_TOTALS_POOL = [
+  3, 25, 50, 100, 180, 250, 300, 400, 600, 750, 1000, 1500, 2000, 2500, 3000, 4000,
+  4500,
+] as const;
 
+function getCampaignNamingPools(country: Country, flag: StoreFlag) {
   const storeLabel = flag;
   const submittedPool =
     country === "Chile"
@@ -150,25 +167,71 @@ function makeCampaigns(country: Country, flag: StoreFlag): Campaign[] {
     "Julio",
   ];
 
-  const totalsPool = [
-    3,
-    25,
-    50,
-    100,
-    180,
-    250,
-    300,
-    400,
-    600,
-    750,
-    1000,
-    1500,
-    2000,
-    2500,
-    3000,
-    4000,
-    4500,
-  ];
+  return { storeLabel, submittedPool, descriptors, months };
+}
+
+function pickRandom<T>(items: readonly T[], random: () => number): T {
+  return items[Math.floor(random() * items.length)]!;
+}
+
+/** Una campaña nueva totalmente aleatoria (modo simulación / carga masiva). */
+function createRandomSimulatedCampaign(
+  country: Country,
+  flag: StoreFlag,
+  options: {
+    fixedTotal?: number;
+    simError: boolean;
+    errorPercent: number;
+    uniqueId: string;
+  },
+): Campaign {
+  const r = Math.random;
+  const { storeLabel, submittedPool, descriptors, months } =
+    getCampaignNamingPools(country, flag);
+
+  const month = pickRandom(months, r);
+  const descriptor = pickRandom(descriptors, r);
+  const name = `Campaña ${month} - ${descriptor} - ${storeLabel} (${country})`;
+  const submittedBy = pickRandom(submittedPool, r);
+
+  let total: number;
+  if (options.fixedTotal != null && Number.isFinite(options.fixedTotal)) {
+    total = options.fixedTotal;
+  } else {
+    total = pickRandom(CAMPAIGN_TOTALS_POOL, r);
+  }
+  total = Math.min(999_999, Math.max(1, total));
+
+  let canStuck = false;
+  let stuckTargetPercent: number | undefined;
+  if (options.simError && r() < 0.4) {
+    canStuck = true;
+    const base = Math.min(99, Math.max(1, options.errorPercent));
+    stuckTargetPercent = Math.min(
+      99,
+      Math.max(1, Math.round(base + (r() - 0.5) * 18)),
+    );
+  }
+
+  return {
+    id: options.uniqueId,
+    name,
+    status: "idle",
+    submittedBy,
+    total,
+    done: 0,
+    canStuck,
+    hasStuck: false,
+    stuckTargetPercent,
+  };
+}
+
+function makeCampaigns(country: Country, flag: StoreFlag): Campaign[] {
+  const seed = hashString(`${country}|${flag}`);
+  const rand = mulberry32(seed);
+
+  const { storeLabel, submittedPool, descriptors, months } =
+    getCampaignNamingPools(country, flag);
 
   const patterns: CampaignStatus[][] = [
     ["idle", "pending", "success", "idle", "pending", "success"],
@@ -183,7 +246,8 @@ function makeCampaigns(country: Country, flag: StoreFlag): Campaign[] {
 
   const base: Campaign[] = ids.map((id, idx): Campaign => {
     const status = pattern[idx] ?? "idle";
-    let total = totalsPool[Math.floor(rand() * totalsPool.length)];
+    let total: number =
+      CAMPAIGN_TOTALS_POOL[Math.floor(rand() * CAMPAIGN_TOTALS_POOL.length)];
     if (country === "Chile" && flag === "Jumbo" && id === "c2") {
       total = Math.max(total, 500);
     }
@@ -354,11 +418,47 @@ export function PriceMonitorPage({
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
   const [newCampaignName, setNewCampaignName] = React.useState("");
   const [newCampaignFile, setNewCampaignFile] = React.useState<File | null>(null);
+  const lastAutoFilledNameRef = React.useRef<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [simCollapseOpen, setSimCollapseOpen] = React.useState(false);
   const [simArticles, setSimArticles] = React.useState("");
   const [simError, setSimError] = React.useState(false);
   const [simErrorPercent, setSimErrorPercent] = React.useState("80");
+  const [simBulkCount, setSimBulkCount] = React.useState("");
+  const [campaignsPage, setCampaignsPage] = React.useState(1);
+
+  const [snackbarOpen, setSnackbarOpen] = React.useState(false);
+  const [snackbarMessage, setSnackbarMessage] = React.useState("");
+  const snackbarTimeoutRef = React.useRef<
+    ReturnType<typeof window.setTimeout> | null
+  >(null);
+
+  const triggerSnackbar = React.useCallback((message: string) => {
+    setSnackbarMessage(message);
+    setSnackbarOpen(true);
+
+    if (snackbarTimeoutRef.current) {
+      window.clearTimeout(snackbarTimeoutRef.current);
+    }
+
+    snackbarTimeoutRef.current = window.setTimeout(() => {
+      setSnackbarOpen(false);
+    }, 5000);
+  }, []);
+
+  const totalCampaignPages = Math.max(
+    1,
+    Math.ceil(campaigns.length / CAMPAIGNS_PAGE_SIZE),
+  );
+
+  const paginatedCampaigns = React.useMemo(() => {
+    const start = (campaignsPage - 1) * CAMPAIGNS_PAGE_SIZE;
+    return campaigns.slice(start, start + CAMPAIGNS_PAGE_SIZE);
+  }, [campaigns, campaignsPage]);
+
+  React.useEffect(() => {
+    setCampaignsPage((p) => Math.min(Math.max(1, p), totalCampaignPages));
+  }, [totalCampaignPages]);
 
   const selectedCampaign = React.useMemo(
     () => campaigns.find((c) => c.id === selectedId) ?? null,
@@ -502,6 +602,14 @@ export function PriceMonitorPage({
     };
   }, [stopSimulation]);
 
+  React.useEffect(() => {
+    return () => {
+      if (snackbarTimeoutRef.current) {
+        window.clearTimeout(snackbarTimeoutRef.current);
+      }
+    };
+  }, []);
+
   function openDetails(id: string) {
     setSelectedId(id);
     setDetailsOpen(true);
@@ -540,10 +648,72 @@ export function PriceMonitorPage({
   function resetCreateCampaignForm() {
     setNewCampaignName("");
     setNewCampaignFile(null);
+    lastAutoFilledNameRef.current = null;
     setSimCollapseOpen(false);
     setSimArticles("");
     setSimError(false);
     setSimErrorPercent("80");
+    setSimBulkCount("");
+  }
+
+  function handleFileSelected(file: File | null) {
+    setNewCampaignFile(file);
+    if (!file) return;
+
+    const autoName = getCampaignNameFromFile(file.name);
+    if (!autoName) return;
+
+    setNewCampaignName((prev) => {
+      const trimmedPrev = prev.trim();
+      const canAutofill =
+        trimmedPrev.length === 0 || trimmedPrev === lastAutoFilledNameRef.current;
+      if (!canAutofill) return prev;
+      lastAutoFilledNameRef.current = autoName;
+      return autoName;
+    });
+  }
+
+  const bulkSimCountParsed = Number.parseInt(
+    simBulkCount.replace(/\D/g, "") || "0",
+    10,
+  );
+  const bulkSimCountValid =
+    Number.isFinite(bulkSimCountParsed) &&
+    bulkSimCountParsed >= 1 &&
+    bulkSimCountParsed <= 100;
+
+  function handleBulkRandomCampaigns() {
+    if (!bulkSimCountValid) return;
+    const count = bulkSimCountParsed;
+
+    const rawArticles = simArticles.replace(/\./g, "").trim();
+    const parsedArticles = rawArticles === "" ? NaN : Number.parseInt(rawArticles, 10);
+    const fixedTotal =
+      Number.isFinite(parsedArticles) && parsedArticles > 0
+        ? Math.min(999_999, Math.max(1, parsedArticles))
+        : undefined;
+
+    const p = Number.parseInt(simErrorPercent, 10);
+    const errorPercent = Number.isFinite(p) ? Math.min(99, Math.max(1, p)) : 80;
+
+    const baseTime = Date.now();
+    const created: Campaign[] = [];
+    for (let i = 0; i < count; i++) {
+      created.push(
+        createRandomSimulatedCampaign(country, flag, {
+          fixedTotal,
+          simError,
+          errorPercent,
+          uniqueId: `c-${baseTime}-${i}-${Math.random().toString(36).slice(2, 10)}`,
+        }),
+      );
+    }
+
+    setCampaigns((prev) => [...created, ...prev]);
+    setCampaignsPage(1);
+    setCreateDialogOpen(false);
+    resetCreateCampaignForm();
+    triggerSnackbar("La campaña se cargó correctamente.");
   }
 
   function handleCreateCampaign() {
@@ -579,6 +749,7 @@ export function PriceMonitorPage({
     setCampaigns((prev) => [created, ...prev]);
     setCreateDialogOpen(false);
     resetCreateCampaignForm();
+    triggerSnackbar("La campaña se cargó correctamente.");
   }
 
   return (
@@ -596,144 +767,201 @@ export function PriceMonitorPage({
         </Button>
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Nombre de campaña</TableHead>
-            <TableHead>Estado</TableHead>
-            <TableHead>Subido por</TableHead>
-            <TableHead>Artículos</TableHead>
-            <TableHead>Progreso</TableHead>
-            <TableHead className="text-right">Acciones</TableHead>
-          </TableRow>
-        </TableHeader>
+      <div className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-md">
+        <Table>
+          <TableHeader>
+            <TableRow className="border-border/60 hover:bg-[#F1F5F9]">
+              <TableHead>Nombre de campaña</TableHead>
+              <TableHead>Estado</TableHead>
+              <TableHead>Subido por</TableHead>
+              <TableHead>Artículos</TableHead>
+              <TableHead>Progreso</TableHead>
+              <TableHead className="text-right">Acciones</TableHead>
+            </TableRow>
+          </TableHeader>
 
-        <TableBody>
-          {campaigns.map((c) => {
-            const percent = getProgressPercent(c);
-            const progressText = `${formatIntEs(c.done)} de ${formatIntEs(c.total)}`;
-            const isStuck = c.status === "stuck";
-            const isRunning = Boolean(runningById[c.id]) && c.status !== "success";
-            const restartDisabled = c.done === 0 || c.status === "success";
-            const downloadDisabled = c.status === "idle" && c.done === 0;
+          <TableBody>
+            {paginatedCampaigns.map((c) => {
+              const percent = getProgressPercent(c);
+              const progressText = `${formatIntEs(c.done)} de ${formatIntEs(c.total)}`;
+              const isStuck = c.status === "stuck";
+              // Solo "en marcha" si sigue pending: al pasar a success/stuck el intervalo se corta
+              // pero runningById puede actualizarse un tick después → evita quedar en Pause pegado.
+              const isRunning = Boolean(runningById[c.id]) && c.status === "pending";
+              const restartDisabled = c.done === 0 || c.status === "success";
+              const downloadDisabled = c.status === "idle" && c.done === 0;
 
-            return (
-              <TableRow key={c.id}>
-                <TableCell className="min-w-[240px]">
-                  <div className="font-medium">{c.name}</div>
-                </TableCell>
+              return (
+                <TableRow key={c.id}>
+                  <TableCell className="min-w-[240px]">
+                    <div className="font-medium">{c.name}</div>
+                  </TableCell>
 
-                <TableCell>
-                  {c.status === "idle" && <Badge variant="outline">Inactivo</Badge>}
-                  {c.status === "pending" && <Badge variant="secondary">En progreso</Badge>}
-                  {c.status === "success" && <Badge variant="success">Completado</Badge>}
-                  {c.status === "stuck" && (
-                    <Badge className="border-transparent bg-[#DC2626] text-white">
-                      Error
-                    </Badge>
-                  )}
-                </TableCell>
+                  <TableCell>
+                    {c.status === "idle" && <Badge variant="outline">Inactivo</Badge>}
+                    {c.status === "pending" && <Badge variant="secondary">En progreso</Badge>}
+                    {c.status === "success" && <Badge variant="success">Completado</Badge>}
+                    {c.status === "stuck" && (
+                      <Badge className="border-transparent bg-[#DC2626] text-white">
+                        Error
+                      </Badge>
+                    )}
+                  </TableCell>
 
-                <TableCell className="text-muted-foreground">{c.submittedBy}</TableCell>
+                  <TableCell className="text-muted-foreground">{c.submittedBy}</TableCell>
 
-                <TableCell>{formatIntEs(c.total)}</TableCell>
+                  <TableCell>{formatIntEs(c.total)}</TableCell>
 
-                <TableCell className="min-w-[200px]">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="whitespace-nowrap text-xs text-muted-foreground">
-                        {percent}% completado
+                  <TableCell className="min-w-[200px]">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="whitespace-nowrap text-xs text-muted-foreground">
+                          {percent}% completado
+                        </div>
+                        <div className="text-sm font-medium">{progressText}</div>
                       </div>
-                      <div className="text-sm font-medium">{progressText}</div>
+                      <Progress
+                        value={percent}
+                        tone={isStuck ? "stuck" : percent >= 100 ? "complete" : "progress"}
+                      />
                     </div>
-                    <Progress
-                      value={percent}
-                      tone={isStuck ? "stuck" : percent >= 100 ? "complete" : "progress"}
-                    />
-                  </div>
-                </TableCell>
+                  </TableCell>
 
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Ver detalle"
-                      onClick={() => openDetails(c.id)}
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Ver detalle"
+                        onClick={() => openDetails(c.id)}
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
 
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label={isRunning ? "Pausar scraping" : "Iniciar scraping"}
-                      disabled={isStuck}
-                      onClick={() =>
-                        isRunning ? stopSimulation(c.id) : startSimulation(c.id)
-                      }
-                    >
-                      {isRunning ? (
-                        <Pause className="h-4 w-4" />
-                      ) : (
-                        <Play className="h-4 w-4" />
-                      )}
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={isRunning ? "Pausar scraping" : "Iniciar scraping"}
+                        disabled={isStuck}
+                        onClick={() =>
+                          isRunning ? stopSimulation(c.id) : startSimulation(c.id)
+                        }
+                      >
+                        {isRunning ? (
+                          <Pause className="h-4 w-4" />
+                        ) : (
+                          <Play className="h-4 w-4" />
+                        )}
+                      </Button>
 
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      aria-label="Descargar Excel simulado"
-                      disabled={downloadDisabled}
-                      onClick={() => downloadExcelSimulated(c)}
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Descargar Excel simulado"
+                        disabled={downloadDisabled}
+                        onClick={() => downloadExcelSimulated(c)}
+                      >
+                        <Download className="h-4 w-4" />
+                      </Button>
 
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Más acciones"
-                        >
-                          <MoreVertical className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Más acciones"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
 
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onSelect={(e) => {
-                            e.preventDefault();
-                            downloadOriginalCampaignSimulated(c, currency);
-                          }}
-                        >
-                          <Download className="mr-2 h-4 w-4" />
-                          Descargar campaña original
-                        </DropdownMenuItem>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              downloadOriginalCampaignSimulated(c, currency);
+                            }}
+                          >
+                            <Download className="mr-2 h-4 w-4" />
+                            Descargar campaña original
+                          </DropdownMenuItem>
 
-                        <DropdownMenuSeparator />
+                          <DropdownMenuSeparator />
 
-                        <DropdownMenuItem
-                          disabled={restartDisabled}
-                          onSelect={(e) => {
-                            e.preventDefault();
-                            openRestartDialog(c.id);
-                          }}
-                        >
-                          <RotateCcw className="mr-2 h-4 w-4" />
-                          Reiniciar
-                        </DropdownMenuItem>
+                          <DropdownMenuItem
+                            disabled={restartDisabled}
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              openRestartDialog(c.id);
+                            }}
+                          >
+                            <RotateCcw className="mr-2 h-4 w-4" />
+                            Reiniciar
+                          </DropdownMenuItem>
 
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+
+        <div className="flex flex-col gap-3 border-t border-border/60 bg-slate-50/90 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            {campaigns.length === 0 ? (
+              "Sin campañas"
+            ) : (
+              <>
+                Mostrando{" "}
+                <span className="font-medium text-foreground">
+                  {(campaignsPage - 1) * CAMPAIGNS_PAGE_SIZE + 1}–
+                  {Math.min(
+                    campaignsPage * CAMPAIGNS_PAGE_SIZE,
+                    campaigns.length,
+                  )}
+                </span>{" "}
+                de{" "}
+                <span className="font-medium text-foreground">
+                  {formatIntEs(campaigns.length)}
+                </span>{" "}
+                campañas
+              </>
+            )}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              disabled={campaignsPage <= 1 || campaigns.length === 0}
+              onClick={() => setCampaignsPage((p) => Math.max(1, p - 1))}
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Anterior
+            </Button>
+            <span className="min-w-[6.5rem] text-center text-sm tabular-nums text-muted-foreground">
+              Página {campaignsPage} / {totalCampaignPages}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              disabled={campaignsPage >= totalCampaignPages || campaigns.length === 0}
+              onClick={() =>
+                setCampaignsPage((p) => Math.min(totalCampaignPages, p + 1))
+              }
+            >
+              Siguiente
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </div>
 
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent>
@@ -826,12 +1054,16 @@ export function PriceMonitorPage({
                   variant="default"
                   disabled={selectedCampaign.status === "stuck"}
                   onClick={() =>
-                    runningById[selectedCampaign.id]
+                    runningById[selectedCampaign.id] &&
+                    selectedCampaign.status === "pending"
                       ? stopSimulation(selectedCampaign.id)
                       : startSimulation(selectedCampaign.id)
                   }
                 >
-                  {runningById[selectedCampaign.id] ? "Pausar" : "Iniciar / reintentar"}
+                  {runningById[selectedCampaign.id] &&
+                  selectedCampaign.status === "pending"
+                    ? "Pausar"
+                    : "Iniciar / reintentar"}
                 </Button>
               </DialogFooter>
             </div>
@@ -911,7 +1143,11 @@ export function PriceMonitorPage({
               <input
                 id="campaign-name"
                 value={newCampaignName}
-                onChange={(e) => setNewCampaignName(e.target.value)}
+                onChange={(e) => {
+                  setNewCampaignName(e.target.value);
+                  // Si el usuario escribe manualmente, dejamos de "pisar" el nombre.
+                  lastAutoFilledNameRef.current = null;
+                }}
                 placeholder="Navidad 2025"
                 className="h-11 w-full rounded-xl border border-input bg-background px-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
@@ -940,7 +1176,7 @@ export function PriceMonitorPage({
                 type="file"
                 accept=".xlsx,.xlsm"
                 className="hidden"
-                onChange={(e) => setNewCampaignFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => handleFileSelected(e.target.files?.[0] ?? null)}
               />
 
               {newCampaignFile && (
@@ -961,7 +1197,7 @@ export function PriceMonitorPage({
                     variant="ghost"
                     size="icon"
                     aria-label="Eliminar archivo"
-                    onClick={() => setNewCampaignFile(null)}
+                    onClick={() => handleFileSelected(null)}
                   >
                     <Trash2 className="h-4 w-4 text-muted-foreground" />
                   </Button>
@@ -988,55 +1224,101 @@ export function PriceMonitorPage({
                     Solo para pruebas de interfaz en este prototipo; no aplica al producto en
                     desarrollo.
                   </p>
-                  <div className="space-y-2">
-                    <label htmlFor="sim-articles" className="text-sm font-medium">
-                      Cantidad de artículos
-                    </label>
-                    <input
-                      id="sim-articles"
-                      type="text"
-                      inputMode="numeric"
-                      value={simArticles}
-                      onChange={(e) => setSimArticles(e.target.value.replace(/[^\d]/g, ""))}
-                      placeholder="Vacío = aleatorio"
-                      className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Si lo dejas vacío, se asigna un total aleatorio como en las demás campañas.
-                    </p>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <input
-                      id="sim-error"
-                      type="checkbox"
-                      checked={simError}
-                      onChange={(e) => setSimError(e.target.checked)}
-                      className="mt-1 h-4 w-4 rounded border-input"
-                    />
-                    <div className="min-w-0 flex-1 space-y-2">
-                      <label htmlFor="sim-error" className="text-sm font-medium leading-tight">
-                        Simular error al ejecutar
+                  <div className="space-y-3 rounded-lg border border-dashed border-input/80 bg-muted/30 p-3">
+                    <div className="text-sm font-medium">Carga individual</div>
+                    <div className="space-y-2">
+                      <label htmlFor="sim-articles" className="text-sm font-medium">
+                        Cantidad de artículos
                       </label>
+                      <input
+                        id="sim-articles"
+                        type="text"
+                        inputMode="numeric"
+                        value={simArticles}
+                        onChange={(e) => setSimArticles(e.target.value.replace(/[^\d]/g, ""))}
+                        placeholder="Vacío = aleatorio"
+                        className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      />
                       <p className="text-xs text-muted-foreground">
-                        La campaña se detendrá en el porcentaje indicado y mostrará estado Error.
+                        Si lo dejas vacío, se asigna un total aleatorio como en las demás campañas.
                       </p>
-                      <div className="space-y-1">
-                        <label htmlFor="sim-error-pct" className="text-xs text-muted-foreground">
-                          Porcentaje en que ocurre el error
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <input
+                        id="sim-error"
+                        type="checkbox"
+                        checked={simError}
+                        onChange={(e) => setSimError(e.target.checked)}
+                        className="mt-1 h-4 w-4 rounded border-input"
+                      />
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <label htmlFor="sim-error" className="text-sm font-medium leading-tight">
+                          Simular error al ejecutar
                         </label>
-                        <input
-                          id="sim-error-pct"
-                          type="number"
-                          min={1}
-                          max={99}
-                          disabled={!simError}
-                          value={simErrorPercent}
-                          onChange={(e) => setSimErrorPercent(e.target.value)}
-                          className="h-9 w-24 rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-                        />
-                        <span className="ml-2 text-xs text-muted-foreground">% (1–99)</span>
+                        <p className="text-xs text-muted-foreground">
+                          La campaña se detendrá en el porcentaje indicado y mostrará estado Error.
+                        </p>
+                        <div className="space-y-1">
+                          <label htmlFor="sim-error-pct" className="text-xs text-muted-foreground">
+                            Porcentaje en que ocurre el error
+                          </label>
+                          <input
+                            id="sim-error-pct"
+                            type="number"
+                            min={1}
+                            max={99}
+                            disabled={!simError}
+                            value={simErrorPercent}
+                            onChange={(e) => setSimErrorPercent(e.target.value)}
+                            className="h-9 w-24 rounded-lg border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                          />
+                          <span className="ml-2 text-xs text-muted-foreground">% (1–99)</span>
+                        </div>
                       </div>
                     </div>
+                  </div>
+
+                  <div className="space-y-2 rounded-lg border border-dashed border-input/80 bg-muted/30 p-3">
+                    <div className="text-sm font-medium">Carga masiva aleatoria</div>
+                    <p className="text-xs text-muted-foreground">
+                      Genera varias campañas de una vez: nombres, artículos, subido por y (si
+                      activaste error simulado) qué campañas fallan son al azar. Si indicás
+                      cantidad de artículos arriba, todas usarán ese total; si no, cada una
+                      tendrá un total aleatorio.
+                    </p>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <label htmlFor="sim-bulk-count" className="text-xs font-medium">
+                          Cantidad de campañas (máx. 100)
+                        </label>
+                        <input
+                          id="sim-bulk-count"
+                          type="text"
+                          inputMode="numeric"
+                          value={simBulkCount}
+                          onChange={(e) =>
+                            setSimBulkCount(e.target.value.replace(/[^\d]/g, ""))
+                          }
+                          placeholder="Ej. 15"
+                          className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        className="shrink-0 gap-2"
+                        disabled={!bulkSimCountValid}
+                        onClick={handleBulkRandomCampaigns}
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        Generar aleatorias
+                      </Button>
+                    </div>
+                    {simBulkCount.length > 0 && !bulkSimCountValid && (
+                      <p className="text-xs text-amber-700 dark:text-amber-500">
+                        Ingresá un número entre 1 y 100.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -1071,6 +1353,33 @@ export function PriceMonitorPage({
           </div>
         </DialogContent>
       </Dialog>
+
+      {snackbarOpen && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 left-5 z-50 w-[min(90vw,520px)]"
+        >
+          <div className="flex items-center gap-3 rounded-xl border border-border/60 bg-background p-4 shadow-[0_10px_25px_-10px_rgba(0,0,0,0.35)]">
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#16A34A]/15 text-[#16A34A]">
+              <CheckCircle2 className="h-5 w-5" />
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-foreground/90">
+                {snackbarMessage}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSnackbarOpen(false)}
+              className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              aria-label="Cerrar notificación"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
