@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  ArrowLeft,
   CircleHelp,
   ChevronDown,
   ChevronLeft,
@@ -20,13 +21,11 @@ import {
   X,
 } from "lucide-react";
 
-import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "../components/ui/dialog";
@@ -62,6 +61,10 @@ type Campaign = {
   hasStuck: boolean;
   /** Porcentaje (1–99) en el que se simula el error; por defecto 80 si no se define. */
   stuckTargetPercent?: number;
+  /** Último actor que inició la ejecución de la campaña. */
+  startedBy?: string;
+  /** Duración (ms) de la última corrida completa (success o error). */
+  lastRunMs?: number;
 };
 
 type Country = "Chile" | "Argentina";
@@ -88,6 +91,203 @@ function getCampaignNameFromFile(fileName: string) {
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function formatDurationMs(valueMs?: number) {
+  if (!valueMs || valueMs <= 0) return "Sin tiempo registrado";
+  const sec = Math.round(valueMs / 1000);
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}m ${s}s`;
+}
+
+function getSimulatedProcessingMs(campaign: Campaign) {
+  // Base determinística por campaña para que no "salte" entre renders.
+  const seed = hashString(`proc-time|${campaign.id}|${campaign.total}|${campaign.name}`);
+  const rand = mulberry32(seed);
+
+  // Duración total estimada (ms) para una corrida completa.
+  const estimatedTotalMs = Math.max(
+    18_000,
+    Math.round(campaign.total * (35 + rand() * 45)),
+  );
+
+  if (campaign.status === "success") return estimatedTotalMs;
+  if (campaign.status === "stuck") {
+    const stuckPct = Math.min(99, Math.max(1, campaign.stuckTargetPercent ?? 80));
+    return Math.round(estimatedTotalMs * (stuckPct / 100));
+  }
+  if (campaign.status === "pending") {
+    const progressRatio =
+      campaign.total > 0 ? Math.min(0.95, Math.max(0.05, campaign.done / campaign.total)) : 0.15;
+    return Math.round(estimatedTotalMs * progressRatio);
+  }
+  return 0;
+}
+
+type ResultKind =
+  | "Correcto"
+  | "Incorrecto"
+  | "No visible"
+  | "No encontrado"
+  | "Error al procesar";
+
+type ResultSummary = {
+  promotions: number;
+  sku: number;
+  rows: Array<{ kind: ResultKind; count: number; tone: string }>;
+};
+
+function downloadSelectedResultSubsetsSimulated(
+  campaign: Campaign,
+  selectedRows: Array<{ kind: ResultKind; count: number }>,
+  currency: string,
+) {
+  const safeName = campaign.name.replace(/[^\w\s-]/g, "").slice(0, 60) || "campana";
+  const suffix =
+    selectedRows.length === 1
+      ? selectedRows[0]!.kind.toLowerCase().replace(/\s+/g, "-")
+      : "seleccionados";
+  const fileName = `${safeName}-${campaign.id}-${suffix}.xls`;
+
+  const bodyRows = selectedRows
+    .flatMap((group, groupIdx) =>
+      Array.from({ length: Math.max(1, Math.min(group.count, 180)) }).map((_, idx) => {
+        const n = idx + 1 + groupIdx * 1000;
+        const sku = `SKU-${String(n).padStart(4, "0")}`;
+        const basePrice = 900 + ((n * 137) % 1700);
+        const foundPrice = group.kind === "Incorrecto" ? basePrice + 120 : basePrice;
+        const note =
+          group.kind === "Correcto"
+            ? "Monto coincide con archivo promocional"
+            : group.kind === "Incorrecto"
+              ? "Monto promocional no coincide con archivo"
+              : group.kind === "No visible"
+                ? "Artículo no visible (404)"
+                : group.kind === "No encontrado"
+                  ? "Promoción no encontrada; artículo visible"
+                  : "Error al procesar promoción";
+        return `<tr>
+  <td>${sku}</td>
+  <td>${basePrice}</td>
+  <td>${foundPrice}</td>
+  <td>${currency}</td>
+  <td>${group.kind}</td>
+  <td>${note}</td>
+</tr>`;
+      }),
+    )
+    .join("");
+
+  const totalSelected = selectedRows.reduce((acc, row) => acc + row.count, 0);
+  const selectedLabels = selectedRows.map((row) => row.kind).join(", ");
+
+  const html = `<!doctype html>
+<html><head>
+<meta charset="utf-8"/>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+  th { background: #f3f4f6; }
+</style>
+</head>
+<body>
+<h2>Resultados filtrados</h2>
+<p><b>Campaña:</b> ${campaign.name}</p>
+<p><b>Tipos seleccionados:</b> ${selectedLabels}</p>
+<p><b>Registros:</b> ${totalSelected}</p>
+<table>
+  <thead>
+    <tr>
+      <th>SKU</th>
+      <th>Monto esperado</th>
+      <th>Monto encontrado</th>
+      <th>Moneda</th>
+      <th>Resultado</th>
+      <th>Detalle</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${bodyRows}
+  </tbody>
+</table>
+</body></html>`;
+
+  const blob = new Blob([html], {
+    type: "application/vnd.ms-excel;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+const ALL_RESULT_KINDS: ResultKind[] = [
+  "Correcto",
+  "Incorrecto",
+  "No visible",
+  "No encontrado",
+  "Error al procesar",
+];
+
+function toggleResultKind(list: ResultKind[], kind: ResultKind) {
+  return list.includes(kind) ? list.filter((k) => k !== kind) : [...list, kind];
+}
+
+function getSelectedChipAccent(kind: ResultKind) {
+  if (kind === "Correcto") return "border-emerald-300 ring-emerald-200";
+  if (kind === "Incorrecto") return "border-amber-300 ring-amber-200";
+  if (kind === "No visible") return "border-slate-300 ring-slate-200";
+  if (kind === "No encontrado") return "border-blue-300 ring-blue-200";
+  return "border-rose-300 ring-rose-200";
+}
+
+function buildResultSummary(campaign: Campaign): ResultSummary {
+  const sku = Math.max(1, campaign.total);
+  const seed = hashString(`results|${campaign.id}|${campaign.name}|${campaign.total}`);
+  const rand = mulberry32(seed);
+  const promotions = Math.max(1, Math.round(sku / (5 + rand() * 10)));
+
+  const status = campaign.status;
+  const baseWeights =
+    status === "success"
+      ? [0.78, 0.12, 0.04, 0.04, 0.02]
+      : status === "stuck"
+        ? [0.42, 0.17, 0.13, 0.1, 0.18]
+        : status === "pending"
+          ? [0.55, 0.18, 0.09, 0.1, 0.08]
+          : [0.62, 0.16, 0.08, 0.08, 0.06];
+
+  const jittered = baseWeights.map((w) => Math.max(0.01, w + (rand() - 0.5) * 0.05));
+  const totalWeight = jittered.reduce((acc, n) => acc + n, 0);
+  const normalized = jittered.map((n) => n / totalWeight);
+  const counts = normalized.map((n) => Math.floor(n * sku));
+
+  let diff = sku - counts.reduce((acc, n) => acc + n, 0);
+  let idx = 0;
+  while (diff > 0) {
+    counts[idx % counts.length] += 1;
+    idx += 1;
+    diff -= 1;
+  }
+
+  return {
+    promotions,
+    sku,
+    rows: [
+      { kind: "Correcto", count: counts[0] ?? 0, tone: "bg-emerald-100 text-emerald-800" },
+      { kind: "Incorrecto", count: counts[1] ?? 0, tone: "bg-amber-100 text-amber-800" },
+      { kind: "No visible", count: counts[2] ?? 0, tone: "bg-slate-100 text-slate-700" },
+      { kind: "No encontrado", count: counts[3] ?? 0, tone: "bg-blue-100 text-blue-800" },
+      { kind: "Error al procesar", count: counts[4] ?? 0, tone: "bg-rose-100 text-rose-800" },
+    ],
+  };
 }
 
 function hashString(input: string) {
@@ -412,8 +612,7 @@ export function PriceMonitorPage({
   const pendingAutostartCycleRef = React.useRef(1);
   const lastProcessedAutostartCycleRef = React.useRef(0);
   const [runningById, setRunningById] = React.useState<Record<string, boolean>>({});
-  const [detailsOpen, setDetailsOpen] = React.useState(false);
-  const [selectedId, setSelectedId] = React.useState<string | null>(null);
+  const [detailCampaignId, setDetailCampaignId] = React.useState<string | null>(null);
   const [restartDialogOpen, setRestartDialogOpen] = React.useState(false);
   const [restartTargetId, setRestartTargetId] = React.useState<string | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = React.useState(false);
@@ -427,6 +626,7 @@ export function PriceMonitorPage({
   const [simErrorPercent, setSimErrorPercent] = React.useState("80");
   const [simBulkCount, setSimBulkCount] = React.useState("");
   const [campaignsPage, setCampaignsPage] = React.useState(1);
+  const [selectedResultKinds, setSelectedResultKinds] = React.useState<ResultKind[]>([]);
 
   const [snackbarOpen, setSnackbarOpen] = React.useState(false);
   const [snackbarMessage, setSnackbarMessage] = React.useState("");
@@ -461,9 +661,9 @@ export function PriceMonitorPage({
     setCampaignsPage((p) => Math.min(Math.max(1, p), totalCampaignPages));
   }, [totalCampaignPages]);
 
-  const selectedCampaign = React.useMemo(
-    () => campaigns.find((c) => c.id === selectedId) ?? null,
-    [campaigns, selectedId],
+  const detailCampaign = React.useMemo(
+    () => campaigns.find((c) => c.id === detailCampaignId) ?? null,
+    [campaigns, detailCampaignId],
   );
   const restartTargetCampaign = React.useMemo(
     () => campaigns.find((c) => c.id === restartTargetId) ?? null,
@@ -481,7 +681,7 @@ export function PriceMonitorPage({
   }, []);
 
   const startSimulation = React.useCallback(
-    (id: string) => {
+    (id: string, startedBy = "Operador") => {
       const current = campaigns.find((c) => c.id === id);
       if (!current) return;
 
@@ -499,6 +699,7 @@ export function PriceMonitorPage({
             ...c,
             status: "pending",
             done: resetDone,
+            startedBy,
           };
         }),
       );
@@ -546,6 +747,10 @@ export function PriceMonitorPage({
               done: adjustedDone,
               status: nextStatus,
               hasStuck: c.hasStuck || nextStatus === "stuck",
+              lastRunMs:
+                nextStatus === "success" || nextStatus === "stuck"
+                  ? runForMs
+                  : c.lastRunMs,
             };
           }),
         );
@@ -566,7 +771,9 @@ export function PriceMonitorPage({
       stopSimulation(id);
       setCampaigns((prev) =>
         prev.map((c) =>
-          c.id === id ? { ...c, status: "idle", done: 0, hasStuck: false } : c,
+          c.id === id
+            ? { ...c, status: "idle", done: 0, hasStuck: false, lastRunMs: undefined }
+            : c,
         ),
       );
     },
@@ -577,8 +784,7 @@ export function PriceMonitorPage({
     // Al cambiar pais/bandera, limpiamos timers activos y regeneramos campañas.
     Object.keys(intervalsRef.current).forEach((id) => stopSimulation(id));
     setRunningById({});
-    setDetailsOpen(false);
-    setSelectedId(null);
+    setDetailCampaignId(null);
     pendingAutostartCycleRef.current += 1;
     setCampaigns(makeCampaigns(country, flag));
   }, [country, flag, stopSimulation]);
@@ -591,7 +797,7 @@ export function PriceMonitorPage({
     campaigns
       .filter((c) => c.status === "pending" && c.done < c.total)
       .forEach((c) => {
-        if (!intervalsRef.current[c.id]) startSimulation(c.id);
+        if (!intervalsRef.current[c.id]) startSimulation(c.id, "Sistema");
       });
 
     lastProcessedAutostartCycleRef.current = cycle;
@@ -612,8 +818,7 @@ export function PriceMonitorPage({
   }, []);
 
   function openDetails(id: string) {
-    setSelectedId(id);
-    setDetailsOpen(true);
+    setDetailCampaignId(id);
   }
 
   function openRestartDialog(id: string) {
@@ -752,6 +957,171 @@ export function PriceMonitorPage({
     setCreateDialogOpen(false);
     resetCreateCampaignForm();
     triggerSnackbar("La campaña se cargó correctamente.");
+  }
+
+  const detailSummary = detailCampaign ? buildResultSummary(detailCampaign) : null;
+  const selectedResultRows =
+    detailSummary == null
+      ? []
+      : selectedResultKinds
+          .map((kind) => detailSummary.rows.find((row) => row.kind === kind))
+          .filter((row): row is { kind: ResultKind; count: number; tone: string } => Boolean(row));
+
+  React.useEffect(() => {
+    setSelectedResultKinds([]);
+  }, [detailCampaignId]);
+
+  if (detailCampaign && detailSummary) {
+    const runtimeFromActiveRun =
+      detailCampaign.status === "pending" && runStartedAtRef.current[detailCampaign.id]
+        ? Date.now() - runStartedAtRef.current[detailCampaign.id]
+        : undefined;
+    const processingMs =
+      runtimeFromActiveRun ??
+      detailCampaign.lastRunMs ??
+      getSimulatedProcessingMs(detailCampaign);
+
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center justify-between gap-3">
+          <Button variant="outline" className="gap-2" onClick={() => setDetailCampaignId(null)}>
+            <ArrowLeft className="h-4 w-4" />
+            Volver al monitor
+          </Button>
+          <Button variant="secondary" onClick={() => downloadExcelSimulated(detailCampaign)}>
+            Descargar Excel
+          </Button>
+        </div>
+
+        <div className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+          <h2 className="text-xl font-semibold">{detailCampaign.name}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            País: {country} · Bandera: {flag}
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">N° promociones</div>
+              <div className="mt-1 text-lg font-semibold">{formatIntEs(detailSummary.promotions)}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">N° SKU</div>
+              <div className="mt-1 text-lg font-semibold">{formatIntEs(detailSummary.sku)}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">Subido por</div>
+              <div className="mt-1 font-semibold">{detailCampaign.submittedBy}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">Iniciado por</div>
+              <div className="mt-1 font-semibold">{detailCampaign.startedBy ?? "Sin iniciar"}</div>
+            </div>
+            <div className="rounded-lg border p-3">
+              <div className="text-xs text-muted-foreground">Tiempo de procesamiento</div>
+              <div className="mt-1 font-semibold">{formatDurationMs(processingMs)}</div>
+            </div>
+          </div>
+
+        </div>
+
+        <div className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+          <h3 className="text-sm font-semibold">Resultados</h3>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {detailSummary.rows.map((row) => {
+              const isSelected = selectedResultKinds.includes(row.kind);
+              const selectedAccent = getSelectedChipAccent(row.kind);
+              return (
+              <button
+                key={row.kind}
+                type="button"
+                onClick={() =>
+                  setSelectedResultKinds((prev) => toggleResultKind(prev, row.kind))
+                }
+                className={`inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium leading-none transition-colors ${
+                  isSelected
+                    ? `ring-2 ${selectedAccent} ${row.tone}`
+                    : `border-transparent opacity-80 hover:opacity-100 ${row.tone}`
+                }`}
+                title={`Seleccionar resultados "${row.kind}"`}
+              >
+                {formatIntEs(row.count)} - {row.kind}
+              </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setSelectedResultKinds(ALL_RESULT_KINDS)}
+            >
+              Seleccionar todos
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedResultKinds([])}
+            >
+              Limpiar
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="gap-1.5"
+              disabled={selectedResultRows.length === 0}
+              onClick={() =>
+                downloadSelectedResultSubsetsSimulated(
+                  detailCampaign,
+                  selectedResultRows.map((row) => ({ kind: row.kind, count: row.count })),
+                  currency,
+                )
+              }
+            >
+              <Download className="h-3.5 w-3.5" />
+              Descargar seleccionados
+            </Button>
+          </div>
+        </div>
+
+        <Dialog open={restartDialogOpen} onOpenChange={setRestartDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Reiniciar campaña</DialogTitle>
+              <DialogDescription>Elige cómo quieres continuar con esta campaña.</DialogDescription>
+            </DialogHeader>
+            {restartTargetCampaign ? (
+              <div className="mt-4 space-y-3">
+                <button
+                  type="button"
+                  onClick={handleRetryPending}
+                  className="w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent/60"
+                >
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <ListChecks className="h-4 w-4 text-muted-foreground" />
+                    Reintentar pendientes
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRestartFromZero}
+                  className="w-full rounded-lg border p-3 text-left transition-colors hover:bg-accent/60"
+                >
+                  <div className="flex items-center gap-2 text-sm font-semibold">
+                    <RotateCcw className="h-4 w-4 text-muted-foreground" />
+                    Iniciar nuevamente desde cero
+                  </div>
+                </button>
+              </div>
+            ) : (
+              <div className="mt-4 text-sm text-muted-foreground">
+                No hay campaña seleccionada para reiniciar.
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
   }
 
   return (
@@ -964,123 +1334,6 @@ export function PriceMonitorPage({
           </div>
         </div>
       </div>
-
-      <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Detalle del scraping</DialogTitle>
-            <DialogDescription>
-              {selectedCampaign
-                ? selectedCampaign.name
-                : "Seleccioná un registro desde la tabla"}
-            </DialogDescription>
-          </DialogHeader>
-
-          {selectedCampaign ? (
-            <div className="mt-4 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <div className="text-xs text-muted-foreground">Estado</div>
-                  <div className="mt-1">
-                    {selectedCampaign.status === "idle" && (
-                      <Badge variant="outline">Inactivo</Badge>
-                    )}
-                    {selectedCampaign.status === "pending" && (
-                      <Badge variant="secondary">En progreso</Badge>
-                    )}
-                    {selectedCampaign.status === "success" && (
-                      <Badge variant="success">Completado</Badge>
-                    )}
-                    {selectedCampaign.status === "stuck" && (
-                      <Badge className="border-transparent bg-[#DC2626] text-white">
-                        Error
-                      </Badge>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Subido por</div>
-                  <div className="mt-1 font-medium">{selectedCampaign.submittedBy}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Artículos</div>
-                  <div className="mt-1 font-medium">
-                    {formatIntEs(selectedCampaign.total)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">Progreso</div>
-                  <div className="mt-1 font-medium">
-                    {formatIntEs(selectedCampaign.done)} de {formatIntEs(selectedCampaign.total)}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div className="text-xs text-muted-foreground">Barra de progreso</div>
-                <div className="mt-2">
-                  <Progress
-                    value={getProgressPercent(selectedCampaign)}
-                    tone={
-                      selectedCampaign.status === "stuck"
-                        ? "stuck"
-                        : getProgressPercent(selectedCampaign) >= 100
-                          ? "complete"
-                          : "progress"
-                    }
-                  />
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {getProgressPercent(selectedCampaign)}% completado
-                </div>
-              </div>
-
-              <DialogFooter>
-                <Button
-                  variant="secondary"
-                  onClick={() => downloadExcelSimulated(selectedCampaign)}
-                >
-                  Descargar Excel
-                </Button>
-
-                <Button
-                  variant="outline"
-                  disabled={
-                    !(
-                      selectedCampaign.status === "stuck" ||
-                      (selectedCampaign.status === "pending" &&
-                        !Boolean(runningById[selectedCampaign.id]))
-                    )
-                  }
-                  onClick={() => openRestartDialog(selectedCampaign.id)}
-                >
-                  Reiniciar
-                </Button>
-
-                <Button
-                  variant="default"
-                  disabled={selectedCampaign.status === "stuck"}
-                  onClick={() =>
-                    runningById[selectedCampaign.id] &&
-                    selectedCampaign.status === "pending"
-                      ? stopSimulation(selectedCampaign.id)
-                      : startSimulation(selectedCampaign.id)
-                  }
-                >
-                  {runningById[selectedCampaign.id] &&
-                  selectedCampaign.status === "pending"
-                    ? "Pausar"
-                    : "Iniciar / reintentar"}
-                </Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <div className="mt-4 text-sm text-muted-foreground">
-              No hay campaña seleccionada.
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={restartDialogOpen} onOpenChange={setRestartDialogOpen}>
         <DialogContent>
