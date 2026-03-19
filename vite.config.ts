@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react'
 
 // https://vite.dev/config/
 export default defineConfig({
-  // Relative assets path for GitHub Pages project sites.
-  base: './',
+  // GitHub Pages project site base path.
+  base: "/scrap-prototype/",
   plugins: [react()],
 })
