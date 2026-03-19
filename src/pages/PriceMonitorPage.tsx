@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  CircleHelp,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -629,6 +630,7 @@ export function PriceMonitorPage({
   function handleRestartFromZero() {
     if (!restartTargetCampaign) return;
     restartSimulation(restartTargetCampaign.id);
+    startSimulation(restartTargetCampaign.id);
     setRestartDialogOpen(false);
   }
 
@@ -772,7 +774,6 @@ export function PriceMonitorPage({
           <TableHeader>
             <TableRow className="border-border/60 hover:bg-[#F1F5F9]">
               <TableHead>Nombre de campaña</TableHead>
-              <TableHead>Estado</TableHead>
               <TableHead>Subido por</TableHead>
               <TableHead>Artículos</TableHead>
               <TableHead>Progreso</TableHead>
@@ -797,17 +798,6 @@ export function PriceMonitorPage({
                     <div className="font-medium">{c.name}</div>
                   </TableCell>
 
-                  <TableCell>
-                    {c.status === "idle" && <Badge variant="outline">Inactivo</Badge>}
-                    {c.status === "pending" && <Badge variant="secondary">En progreso</Badge>}
-                    {c.status === "success" && <Badge variant="success">Completado</Badge>}
-                    {c.status === "stuck" && (
-                      <Badge className="border-transparent bg-[#DC2626] text-white">
-                        Error
-                      </Badge>
-                    )}
-                  </TableCell>
-
                   <TableCell className="text-muted-foreground">{c.submittedBy}</TableCell>
 
                   <TableCell>{formatIntEs(c.total)}</TableCell>
@@ -815,8 +805,21 @@ export function PriceMonitorPage({
                   <TableCell className="min-w-[200px]">
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between gap-3">
-                        <div className="whitespace-nowrap text-xs text-muted-foreground">
-                          {percent}% completado
+                        <div className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted-foreground">
+                          <span>{percent}% completado</span>
+                          {isStuck && (
+                            <span className="group relative inline-flex">
+                              <span
+                                className="inline-flex cursor-help text-[#DC2626]"
+                                aria-label="Información de error de campaña"
+                              >
+                                <CircleHelp className="h-3.5 w-3.5" />
+                              </span>
+                              <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-20 w-64 max-w-[calc(100vw-2rem)] -translate-x-1/2 whitespace-normal break-words rounded-lg border border-border/60 bg-popover px-3 py-2 text-[11px] leading-snug text-foreground shadow-lg opacity-0 transition-opacity group-hover:opacity-100">
+                                Ocurrió un error inesperado, por favor reinicia la campaña.
+                              </span>
+                            </span>
+                          )}
                         </div>
                         <div className="text-sm font-medium">{progressText}</div>
                       </div>
