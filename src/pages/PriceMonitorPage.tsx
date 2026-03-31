@@ -631,6 +631,9 @@ export function PriceMonitorPage({
   const [newCampaignFile, setNewCampaignFile] = React.useState<File | null>(null);
   const lastAutoFilledNameRef = React.useRef<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [draftCountry, setDraftCountry] = React.useState<Country>(country);
+  const [draftFlag, setDraftFlag] = React.useState<StoreFlag>(flag);
+  const nextCampaignsOverrideRef = React.useRef<Campaign[] | null>(null);
   const [simCollapseOpen, setSimCollapseOpen] = React.useState(false);
   const [simArticles, setSimArticles] = React.useState("");
   const [simError, setSimError] = React.useState(false);
@@ -807,7 +810,12 @@ export function PriceMonitorPage({
     setRunningById({});
     setDetailCampaignId(null);
     pendingAutostartCycleRef.current += 1;
-    setCampaigns(makeCampaigns(country, flag));
+    if (nextCampaignsOverrideRef.current) {
+      setCampaigns(nextCampaignsOverrideRef.current);
+      nextCampaignsOverrideRef.current = null;
+    } else {
+      setCampaigns(makeCampaigns(country, flag));
+    }
   }, [country, flag, stopSimulation]);
 
   // Arrancamos automáticamente `pending` solo una vez por ciclo de carga.
@@ -877,6 +885,8 @@ export function PriceMonitorPage({
     setNewCampaignName("");
     setNewCampaignFile(null);
     lastAutoFilledNameRef.current = null;
+    setDraftCountry(country);
+    setDraftFlag(flag);
     setSimCollapseOpen(false);
     setSimArticles("");
     setSimError(false);
@@ -910,6 +920,14 @@ export function PriceMonitorPage({
     bulkSimCountParsed >= 1 &&
     bulkSimCountParsed <= 100;
 
+  function setDraftCountryWithCompatibleFlag(nextCountry: Country) {
+    setDraftCountry(nextCountry);
+    setDraftFlag((prev) => {
+      const allowed = AVAILABLE_FLAGS_BY_COUNTRY[nextCountry];
+      return allowed.includes(prev) ? prev : allowed[0];
+    });
+  }
+
   function handleBulkRandomCampaigns() {
     if (!bulkSimCountValid) return;
     const count = bulkSimCountParsed;
@@ -928,7 +946,7 @@ export function PriceMonitorPage({
     const created: Campaign[] = [];
     for (let i = 0; i < count; i++) {
       created.push(
-        createRandomSimulatedCampaign(country, flag, {
+        createRandomSimulatedCampaign(draftCountry, draftFlag, {
           fixedTotal,
           simError,
           errorPercent,
@@ -937,7 +955,13 @@ export function PriceMonitorPage({
       );
     }
 
-    setCampaigns((prev) => [...created, ...prev]);
+    const shouldChangeContext = draftCountry !== country || draftFlag !== flag;
+    if (shouldChangeContext) {
+      nextCampaignsOverrideRef.current = [...created, ...makeCampaigns(draftCountry, draftFlag)];
+      onContextChange?.({ country: draftCountry, flag: draftFlag });
+    } else {
+      setCampaigns((prev) => [...created, ...prev]);
+    }
     setCampaignsPage(1);
     setCreateDialogOpen(false);
     resetCreateCampaignForm();
@@ -974,7 +998,13 @@ export function PriceMonitorPage({
       stuckTargetPercent: stuckPct,
     };
 
-    setCampaigns((prev) => [created, ...prev]);
+    const shouldChangeContext = draftCountry !== country || draftFlag !== flag;
+    if (shouldChangeContext) {
+      nextCampaignsOverrideRef.current = [created, ...makeCampaigns(draftCountry, draftFlag)];
+      onContextChange?.({ country: draftCountry, flag: draftFlag });
+    } else {
+      setCampaigns((prev) => [created, ...prev]);
+    }
     setCreateDialogOpen(false);
     resetCreateCampaignForm();
     triggerSnackbar("La campaña se cargó correctamente.");
@@ -1490,7 +1520,7 @@ export function PriceMonitorPage({
             </div>
 
             <div className="space-y-2">
-              <div className="text-sm font-semibold">Contexto del módulo</div>
+              <div className="text-sm font-semibold">Seleccione país y bandera a cargar</div>
               <div className="grid gap-2 sm:grid-cols-2">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -1500,7 +1530,7 @@ export function PriceMonitorPage({
                       className="h-10 justify-between px-3"
                       aria-label="Cambiar país para esta carga"
                     >
-                      <span>País: {country}</span>
+                      <span>País: {draftCountry}</span>
                       <ChevronDown className="h-4 w-4 text-muted-foreground" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -1510,7 +1540,7 @@ export function PriceMonitorPage({
                         key={value}
                         onSelect={(e) => {
                           e.preventDefault();
-                          changeModuleContext(value, flag);
+                          setDraftCountryWithCompatibleFlag(value);
                         }}
                       >
                         {value}
@@ -1527,17 +1557,17 @@ export function PriceMonitorPage({
                       className="h-10 justify-between px-3"
                       aria-label="Cambiar bandera para esta carga"
                     >
-                      <span>Bandera: {flag}</span>
+                      <span>Bandera: {draftFlag}</span>
                       <ChevronDown className="h-4 w-4 text-muted-foreground" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start">
-                    {AVAILABLE_FLAGS_BY_COUNTRY[country].map((value) => (
+                    {AVAILABLE_FLAGS_BY_COUNTRY[draftCountry].map((value) => (
                       <DropdownMenuItem
                         key={value}
                         onSelect={(e) => {
                           e.preventDefault();
-                          changeModuleContext(country, value);
+                          setDraftFlag(value);
                         }}
                       >
                         {value}
@@ -1546,9 +1576,6 @@ export function PriceMonitorPage({
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Este cambio aplica solo al módulo actual y no afecta al otro.
-              </p>
             </div>
 
             <div className="space-y-2">

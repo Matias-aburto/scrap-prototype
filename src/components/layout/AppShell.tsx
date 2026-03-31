@@ -32,7 +32,7 @@ export function AppShell({
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <TopBar currentModule={currentModule} country={activeContext.country} flag={activeContext.flag} />
+      <TopBar />
       <Sidebar currentModule={currentModule} onModuleChange={onModuleChange} />
       <main className="pl-[72px]">
         <div className="p-6">
