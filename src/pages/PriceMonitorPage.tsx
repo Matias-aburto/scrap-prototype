@@ -73,6 +73,12 @@ const AVAILABLE_FLAGS_BY_COUNTRY: Record<Country, StoreFlag[]> = {
   Argentina: ["Jumbo", "Disco", "Vea"],
 };
 
+function getCountryIcon(country: Country) {
+  return country === "Chile"
+    ? "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f1e8-1f1f1.png"
+    : "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f1e6-1f1f7.png";
+}
+
 function formatIntEs(value: number) {
   return new Intl.NumberFormat("es-AR").format(value);
 }
@@ -1185,7 +1191,14 @@ export function PriceMonitorPage({
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="h-9 px-3" aria-label="Seleccionar país del módulo">
                   <span className="mr-1 text-xs text-muted-foreground">País</span>
-                  <span className="text-sm font-medium">{country}</span>
+                  <span className="inline-flex items-center gap-1.5 text-sm font-medium">
+                    <img
+                      src={getCountryIcon(country)}
+                      alt={`Bandera de ${country}`}
+                      className="h-3.5 w-5 rounded-none object-cover"
+                    />
+                    {country}
+                  </span>
                   <ChevronDown className="ml-2 h-4 w-4 text-muted-foreground" />
                 </Button>
               </DropdownMenuTrigger>
@@ -1198,7 +1211,14 @@ export function PriceMonitorPage({
                       changeModuleContext(value, flag);
                     }}
                   >
-                    {value}
+                    <span className="inline-flex items-center gap-1.5">
+                      <img
+                        src={getCountryIcon(value)}
+                        alt={`Bandera de ${value}`}
+                        className="h-3.5 w-5 rounded-none object-cover"
+                      />
+                      {value}
+                    </span>
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -1530,7 +1550,15 @@ export function PriceMonitorPage({
                       className="h-10 justify-between px-3"
                       aria-label="Cambiar país para esta carga"
                     >
-                      <span>País: {draftCountry}</span>
+                      <span className="inline-flex items-center gap-1.5">
+                        País:
+                        <img
+                          src={getCountryIcon(draftCountry)}
+                          alt={`Bandera de ${draftCountry}`}
+                          className="h-3.5 w-5 rounded-none object-cover"
+                        />
+                        {draftCountry}
+                      </span>
                       <ChevronDown className="h-4 w-4 text-muted-foreground" />
                     </Button>
                   </DropdownMenuTrigger>
@@ -1543,7 +1571,14 @@ export function PriceMonitorPage({
                           setDraftCountryWithCompatibleFlag(value);
                         }}
                       >
-                        {value}
+                        <span className="inline-flex items-center gap-1.5">
+                          <img
+                            src={getCountryIcon(value)}
+                            alt={`Bandera de ${value}`}
+                            className="h-3.5 w-5 rounded-none object-cover"
+                          />
+                          {value}
+                        </span>
                       </DropdownMenuItem>
                     ))}
                   </DropdownMenuContent>
