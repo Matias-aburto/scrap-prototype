@@ -597,9 +597,15 @@ function downloadOriginalCampaignSimulated(campaign: Campaign, currency: string)
 export function PriceMonitorPage({
   country = "Chile",
   flag = "Jumbo",
+  pageTitle = "Monitor de precios",
+  detailBackLabel = "monitor",
+  enableDetailView = true,
 }: {
   country?: Country;
   flag?: StoreFlag;
+  pageTitle?: string;
+  detailBackLabel?: string;
+  enableDetailView?: boolean;
 }) {
   const currency = country === "Chile" ? "CLP" : "ARS";
 
@@ -986,7 +992,7 @@ export function PriceMonitorPage({
         <div className="flex items-center justify-between gap-3">
           <Button variant="outline" className="gap-2" onClick={() => setDetailCampaignId(null)}>
             <ArrowLeft className="h-4 w-4" />
-            Volver al monitor
+            Volver a {detailBackLabel}
           </Button>
           <Button variant="secondary" onClick={() => downloadExcelSimulated(detailCampaign)}>
             Descargar Excel
@@ -1127,7 +1133,7 @@ export function PriceMonitorPage({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">Monitor de precios</h1>
+        <h1 className="text-2xl font-semibold">{pageTitle}</h1>
         <Button
           onClick={() => {
             resetCreateCampaignForm();
@@ -1202,14 +1208,16 @@ export function PriceMonitorPage({
 
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Ver detalle"
-                        onClick={() => openDetails(c.id)}
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
+                      {enableDetailView && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Ver detalle"
+                          onClick={() => openDetails(c.id)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                      )}
 
                       <Button
                         variant="ghost"

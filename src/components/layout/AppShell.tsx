@@ -5,8 +5,17 @@ import { TopBar } from "./TopBar";
 
 export type Country = "Chile" | "Argentina";
 export type StoreFlag = "Jumbo" | "Santa Isabel" | "Disco" | "Vea";
+export type AppModule = "price-monitor" | "badge-validation";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  currentModule,
+  onModuleChange,
+}: {
+  children: React.ReactNode;
+  currentModule: AppModule;
+  onModuleChange: (module: AppModule) => void;
+}) {
   const [country, setCountry] = React.useState<Country>("Chile");
   const [flag, setFlag] = React.useState<StoreFlag>("Jumbo");
 
@@ -19,7 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <TopBar country={country} flag={flag} onCountryChange={setCountry} onFlagChange={setFlag} />
-      <Sidebar />
+      <Sidebar currentModule={currentModule} onModuleChange={onModuleChange} />
       <main className="pl-[72px]">
         <div className="p-6">
           {React.isValidElement(children)
