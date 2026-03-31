@@ -45,6 +45,7 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
+import type { Country, ModuleContext, StoreFlag } from "../components/layout/AppShell";
 
 const CAMPAIGNS_PAGE_SIZE = 10;
 
@@ -67,8 +68,10 @@ type Campaign = {
   lastRunMs?: number;
 };
 
-type Country = "Chile" | "Argentina";
-type StoreFlag = "Jumbo" | "Santa Isabel" | "Disco" | "Vea";
+const AVAILABLE_FLAGS_BY_COUNTRY: Record<Country, StoreFlag[]> = {
+  Chile: ["Jumbo", "Santa Isabel"],
+  Argentina: ["Jumbo", "Disco", "Vea"],
+};
 
 function formatIntEs(value: number) {
   return new Intl.NumberFormat("es-AR").format(value);
@@ -597,12 +600,14 @@ function downloadOriginalCampaignSimulated(campaign: Campaign, currency: string)
 export function PriceMonitorPage({
   country = "Chile",
   flag = "Jumbo",
+  onContextChange,
   pageTitle = "Monitor de precios",
   detailBackLabel = "monitor",
   enableDetailView = true,
 }: {
   country?: Country;
   flag?: StoreFlag;
+  onContextChange?: (next: ModuleContext) => void;
   pageTitle?: string;
   detailBackLabel?: string;
   enableDetailView?: boolean;
@@ -633,6 +638,16 @@ export function PriceMonitorPage({
   const [simBulkCount, setSimBulkCount] = React.useState("");
   const [campaignsPage, setCampaignsPage] = React.useState(1);
   const [selectedResultKinds, setSelectedResultKinds] = React.useState<ResultKind[]>([]);
+
+  const changeModuleContext = React.useCallback(
+    (nextCountry: Country, preferredFlag?: StoreFlag) => {
+      const allowedFlags = AVAILABLE_FLAGS_BY_COUNTRY[nextCountry];
+      const nextFlag =
+        preferredFlag && allowedFlags.includes(preferredFlag) ? preferredFlag : allowedFlags[0];
+      onContextChange?.({ country: nextCountry, flag: nextFlag });
+    },
+    [onContextChange],
+  );
 
   const [snackbarOpen, setSnackbarOpen] = React.useState(false);
   const [snackbarMessage, setSnackbarMessage] = React.useState("");
@@ -1133,7 +1148,60 @@ export function PriceMonitorPage({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-2xl font-semibold">{pageTitle}</h1>
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold">{pageTitle}</h1>
+          <div className="flex flex-wrap items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="h-9 px-3" aria-label="Seleccionar país del módulo">
+                  <span className="mr-1 text-xs text-muted-foreground">País</span>
+                  <span className="text-sm font-medium">{country}</span>
+                  <ChevronDown className="ml-2 h-4 w-4 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {(["Chile", "Argentina"] as const).map((value) => (
+                  <DropdownMenuItem
+                    key={value}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      changeModuleContext(value, flag);
+                    }}
+                  >
+                    {value}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  className="h-9 px-3"
+                  aria-label="Seleccionar bandera del módulo"
+                >
+                  <span className="mr-1 text-xs text-muted-foreground">Bandera</span>
+                  <span className="text-sm font-medium">{flag}</span>
+                  <ChevronDown className="ml-2 h-4 w-4 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start">
+                {AVAILABLE_FLAGS_BY_COUNTRY[country].map((value) => (
+                  <DropdownMenuItem
+                    key={value}
+                    onSelect={(e) => {
+                      e.preventDefault();
+                      changeModuleContext(country, value);
+                    }}
+                  >
+                    {value}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
         <Button
           onClick={() => {
             resetCreateCampaignForm();
@@ -1419,6 +1487,68 @@ export function PriceMonitorPage({
                 placeholder="Navidad 2025"
                 className="h-11 w-full rounded-xl border border-input bg-background px-4 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-semibold">Contexto del módulo</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 justify-between px-3"
+                      aria-label="Cambiar país para esta carga"
+                    >
+                      <span>País: {country}</span>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    {(["Chile", "Argentina"] as const).map((value) => (
+                      <DropdownMenuItem
+                        key={value}
+                        onSelect={(e) => {
+                          e.preventDefault();
+                          changeModuleContext(value, flag);
+                        }}
+                      >
+                        {value}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 justify-between px-3"
+                      aria-label="Cambiar bandera para esta carga"
+                    >
+                      <span>Bandera: {flag}</span>
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start">
+                    {AVAILABLE_FLAGS_BY_COUNTRY[country].map((value) => (
+                      <DropdownMenuItem
+                        key={value}
+                        onSelect={(e) => {
+                          e.preventDefault();
+                          changeModuleContext(country, value);
+                        }}
+                      >
+                        {value}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Este cambio aplica solo al módulo actual y no afecta al otro.
+              </p>
             </div>
 
             <div className="space-y-2">

@@ -6,6 +6,7 @@ import { TopBar } from "./TopBar";
 export type Country = "Chile" | "Argentina";
 export type StoreFlag = "Jumbo" | "Santa Isabel" | "Disco" | "Vea";
 export type AppModule = "price-monitor" | "badge-validation";
+export type ModuleContext = { country: Country; flag: StoreFlag };
 
 export function AppShell({
   children,
@@ -16,23 +17,31 @@ export function AppShell({
   currentModule: AppModule;
   onModuleChange: (module: AppModule) => void;
 }) {
-  const [country, setCountry] = React.useState<Country>("Chile");
-  const [flag, setFlag] = React.useState<StoreFlag>("Jumbo");
+  const [moduleContexts, setModuleContexts] = React.useState<Record<AppModule, ModuleContext>>({
+    "price-monitor": { country: "Chile", flag: "Jumbo" },
+    "badge-validation": { country: "Chile", flag: "Santa Isabel" },
+  });
+  const activeContext = moduleContexts[currentModule];
 
-  React.useEffect(() => {
-    const allowed: StoreFlag[] =
-      country === "Chile" ? ["Jumbo", "Santa Isabel"] : ["Jumbo", "Disco", "Vea"];
-    if (!allowed.includes(flag)) setFlag(allowed[0]);
-  }, [country, flag]);
+  const setCurrentModuleContext = React.useCallback(
+    (next: ModuleContext) => {
+      setModuleContexts((prev) => ({ ...prev, [currentModule]: next }));
+    },
+    [currentModule],
+  );
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <TopBar country={country} flag={flag} onCountryChange={setCountry} onFlagChange={setFlag} />
+      <TopBar currentModule={currentModule} country={activeContext.country} flag={activeContext.flag} />
       <Sidebar currentModule={currentModule} onModuleChange={onModuleChange} />
       <main className="pl-[72px]">
         <div className="p-6">
           {React.isValidElement(children)
-            ? React.cloneElement(children, { country, flag } as any)
+            ? React.cloneElement(children, {
+                country: activeContext.country,
+                flag: activeContext.flag,
+                onContextChange: setCurrentModuleContext,
+              } as any)
             : children}
         </div>
       </main>
