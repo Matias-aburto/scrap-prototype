@@ -1,4 +1,10 @@
-import { BadgeCheck, LayoutDashboard } from "lucide-react";
+import {
+  BadgeCheck,
+  LayoutDashboard,
+  ScrollText,
+  Shield,
+  Users,
+} from "lucide-react";
 
 import { Button } from "../ui/button";
 import type { AppModule } from "./AppShell";
@@ -13,6 +19,9 @@ export function Sidebar({
   const items: Array<{ key: AppModule; label: string; icon: typeof LayoutDashboard }> = [
     { key: "price-monitor", label: "Monitor de precios", icon: LayoutDashboard },
     { key: "badge-validation", label: "Validación de cucardas", icon: BadgeCheck },
+    { key: "user-maintainer", label: "Mantenedor de usuarios", icon: Users },
+    { key: "role-maintainer", label: "Mantenedor de roles", icon: Shield },
+    { key: "event-log", label: "Log de eventos", icon: ScrollText },
   ];
 
   return (
@@ -35,7 +44,9 @@ export function Sidebar({
               aria-current={isActive ? "page" : undefined}
               onClick={() => onModuleChange(item.key)}
             >
-              <Icon className="h-4 w-4" />
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                <Icon className="h-4 w-4" />
+              </span>
               <span className="sr-only">{item.label}</span>
               <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-[180px] group-hover:opacity-100">
                 {item.label}
@@ -47,4 +58,3 @@ export function Sidebar({
     </aside>
   );
 }
-

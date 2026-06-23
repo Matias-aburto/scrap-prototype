@@ -5,7 +5,12 @@ import { TopBar } from "./TopBar";
 
 export type Country = "Chile" | "Argentina";
 export type StoreFlag = "Jumbo" | "Santa Isabel" | "Disco" | "Vea";
-export type AppModule = "price-monitor" | "badge-validation";
+export type AppModule =
+  | "price-monitor"
+  | "badge-validation"
+  | "user-maintainer"
+  | "role-maintainer"
+  | "event-log";
 export type ModuleContext = { country: Country; flag: StoreFlag };
 
 export function AppShell({
@@ -20,6 +25,9 @@ export function AppShell({
   const [moduleContexts, setModuleContexts] = React.useState<Record<AppModule, ModuleContext>>({
     "price-monitor": { country: "Chile", flag: "Jumbo" },
     "badge-validation": { country: "Chile", flag: "Santa Isabel" },
+    "user-maintainer": { country: "Chile", flag: "Jumbo" },
+    "role-maintainer": { country: "Chile", flag: "Jumbo" },
+    "event-log": { country: "Chile", flag: "Jumbo" },
   });
   const activeContext = moduleContexts[currentModule];
 
